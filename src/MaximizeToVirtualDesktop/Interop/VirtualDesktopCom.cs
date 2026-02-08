@@ -19,6 +19,7 @@ internal static class ComGuids
     public static readonly Guid CLSID_ImmersiveShell = new("C2F03A33-21F5-47FA-B4BB-156362A2F239");
     public static readonly Guid CLSID_VirtualDesktopManagerInternal = new("C5E0CDCA-7B6E-41B2-9FC4-D93975CC467B");
     public static readonly Guid CLSID_VirtualDesktopManager = new("AA509086-5CA9-4C25-8F95-589D3C07B48A");
+    public static readonly Guid CLSID_VirtualDesktopPinnedApps = new("B5A399E7-1C87-46B8-88E9-FC5747B171BD");
 
     // Same GUID for IVirtualDesktopManagerInternal in both pre-24H2 and 24H2.
     // The vtable layout differs — see the two interface declarations below.
@@ -195,4 +196,18 @@ internal interface IApplicationViewCollection
     void RefreshCollection();
     int RegisterForApplicationViewChanges(object listener, out int cookie);
     int UnregisterForApplicationViewChanges(int cookie);
+}
+
+// Stable across Win11 versions — same GUID in pre-24H2 and 24H2.
+[ComImport]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+[Guid("4CE81583-1E4C-4632-A621-07A53543148F")]
+internal interface IVirtualDesktopPinnedApps
+{
+    bool IsAppIdPinned(string appId);
+    void PinAppID(string appId);
+    void UnpinAppID(string appId);
+    bool IsViewPinned(IApplicationView applicationView);
+    void PinView(IApplicationView applicationView);
+    void UnpinView(IApplicationView applicationView);
 }

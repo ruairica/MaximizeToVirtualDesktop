@@ -12,6 +12,7 @@ namespace MaximizeToVirtualDesktop;
 internal sealed class TrayApplication : Form
 {
     private const int HOTKEY_ID = 0x1;
+    private const int HOTKEY_PIN_ID = 0x2;
     private uint _shellRestartMessage;
     private bool _comInitialized;
 
@@ -43,13 +44,6 @@ internal sealed class TrayApplication : Form
         _vds = new VirtualDesktopService();
         _tracker = new FullScreenTracker();
         _manager = new FullScreenManager(_vds, _tracker);
-        _manager.ShowBalloon = (title, text) =>
-        {
-            _trayIcon.BalloonTipTitle = title;
-            _trayIcon.BalloonTipText = text;
-            _trayIcon.BalloonTipIcon = ToolTipIcon.Warning;
-            _trayIcon.ShowBalloonTip(5000);
-        };
         _monitor = new WindowMonitor(_manager, _tracker, this);
         _mouseHook = new MaximizeButtonHook(_manager, this);
 
@@ -57,7 +51,7 @@ internal sealed class TrayApplication : Form
         _trayIcon = new NotifyIcon
         {
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application,
-            Text = "Maximize to Virtual Desktop\nCtrl+Alt+Shift+X or Shift+Click maximize button",
+            Text = "Maximize to Virtual Desktop\nCtrl+Alt+Shift+X | Shift+Click | Ctrl+Alt+Shift+P to pin",
             Visible = true,
             ContextMenuStrip = BuildContextMenu()
         };
@@ -115,7 +109,7 @@ internal sealed class TrayApplication : Form
                     _retryTimer!.Stop();
                     _retryTimer.Dispose();
                     _retryTimer = null;
-                    _trayIcon.Text = "Maximize to Virtual Desktop\nCtrl+Alt+Shift+X or Shift+Click maximize button";
+                    _trayIcon.Text = "Maximize to Virtual Desktop\nCtrl+Alt+Shift+X | Shift+Click | Ctrl+Alt+Shift+P to pin";
                     StartMonitoring();
                     return;
                 }
@@ -163,6 +157,17 @@ internal sealed class TrayApplication : Form
         {
             Trace.WriteLine("TrayApplication: Registered hotkey Ctrl+Alt+Shift+X");
         }
+
+        if (!NativeMethods.RegisterHotKey(Handle, HOTKEY_PIN_ID,
+            NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_SHIFT | NativeMethods.MOD_NOREPEAT,
+            NativeMethods.VK_P))
+        {
+            Trace.WriteLine("TrayApplication: Failed to register pin hotkey.");
+        }
+        else
+        {
+            Trace.WriteLine("TrayApplication: Registered hotkey Ctrl+Alt+Shift+P");
+        }
     }
 
     protected override void WndProc(ref Message m)
@@ -170,6 +175,12 @@ internal sealed class TrayApplication : Form
         if (m.Msg == (int)NativeMethods.WM_HOTKEY && m.WParam == (IntPtr)HOTKEY_ID)
         {
             OnHotkeyPressed();
+            return;
+        }
+
+        if (m.Msg == (int)NativeMethods.WM_HOTKEY && m.WParam == (IntPtr)HOTKEY_PIN_ID)
+        {
+            OnPinHotkeyPressed();
             return;
         }
 
@@ -190,7 +201,7 @@ internal sealed class TrayApplication : Form
                 _retryTimer?.Stop();
                 _retryTimer?.Dispose();
                 _retryTimer = null;
-                _trayIcon.Text = "Maximize to Virtual Desktop\nCtrl+Alt+Shift+X or Shift+Click maximize button";
+                _trayIcon.Text = "Maximize to Virtual Desktop\nCtrl+Alt+Shift+X | Shift+Click | Ctrl+Alt+Shift+P to pin";
                 StartMonitoring();
             }
             return;
@@ -218,6 +229,25 @@ internal sealed class TrayApplication : Form
         _manager.Toggle(hwnd);
     }
 
+    private void OnPinHotkeyPressed()
+    {
+        if (!_comInitialized)
+        {
+            Trace.WriteLine("TrayApplication: Pin hotkey pressed but COM not initialized.");
+            return;
+        }
+
+        var hwnd = NativeMethods.GetForegroundWindow();
+        if (hwnd == IntPtr.Zero || hwnd == Handle)
+        {
+            Trace.WriteLine("TrayApplication: Pin hotkey pressed but no valid foreground window.");
+            return;
+        }
+
+        Trace.WriteLine($"TrayApplication: Pin hotkey pressed, toggling pin for window {hwnd}");
+        _manager.PinToggle(hwnd);
+    }
+
     private ContextMenuStrip BuildContextMenu()
     {
         var menu = new ContextMenuStrip();
@@ -238,6 +268,14 @@ internal sealed class TrayApplication : Form
             _manager.RestoreAll();
         });
         menu.Items.Add(restoreAllItem);
+
+        var pinItem = new ToolStripMenuItem("Pin/Unpin to All Desktops", null, (_, _) =>
+        {
+            var hwnd = NativeMethods.GetForegroundWindow();
+            if (hwnd != IntPtr.Zero && hwnd != Handle)
+                _manager.PinToggle(hwnd);
+        });
+        menu.Items.Add(pinItem);
 
         menu.Items.Add(new ToolStripSeparator());
 
@@ -334,7 +372,8 @@ internal sealed class TrayApplication : Form
             _trayIcon.BalloonTipTitle = "Maximize to Virtual Desktop";
             _trayIcon.BalloonTipText =
                 "Press Ctrl+Alt+Shift+X or Shift+Click the maximize button " +
-                "to maximize a window to its own virtual desktop.";
+                "to maximize a window to its own virtual desktop.\n" +
+                "Press Ctrl+Alt+Shift+P to pin a window to all desktops.";
             _trayIcon.BalloonTipIcon = ToolTipIcon.Info;
             _trayIcon.ShowBalloonTip(5000);
         }
@@ -348,11 +387,14 @@ internal sealed class TrayApplication : Form
     {
         MessageBox.Show(
             "Maximize to Virtual Desktop\n\n" +
-            "Two ways to maximize a window to its own virtual desktop:\n\n" +
+            "Maximize a window to its own virtual desktop:\n\n" +
             "  • Hotkey: Ctrl+Alt+Shift+X\n" +
             "    Toggles the active window to/from a virtual desktop.\n\n" +
             "  • Shift+Click the maximize button\n" +
             "    Hold Shift and click any window's maximize button.\n\n" +
+            "Pin a window to all virtual desktops:\n\n" +
+            "  • Hotkey: Ctrl+Alt+Shift+P\n" +
+            "    Toggles pin/unpin on the active window.\n\n" +
             "The window is moved to a new virtual desktop and maximized.\n" +
             "Close or restore the window to return to your original desktop.\n\n" +
             "Use \"Restore All\" in the tray menu to bring everything back.",
@@ -411,6 +453,7 @@ internal sealed class TrayApplication : Form
 
         // Clean up native resources
         NativeMethods.UnregisterHotKey(Handle, HOTKEY_ID);
+        NativeMethods.UnregisterHotKey(Handle, HOTKEY_PIN_ID);
         _mouseHook.Dispose();
         _monitor.Dispose();
         _vds.Dispose();

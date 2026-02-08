@@ -14,11 +14,6 @@ internal sealed class FullScreenManager
     private readonly FullScreenTracker _tracker;
     private readonly HashSet<IntPtr> _inFlight = new();
 
-    /// <summary>
-    /// Callback to show a notification balloon (set by TrayApplication).
-    /// </summary>
-    public Action<string, string>? ShowBalloon { get; set; }
-
     public FullScreenManager(VirtualDesktopService vds, FullScreenTracker tracker)
     {
         _vds = vds;
@@ -149,8 +144,8 @@ internal sealed class FullScreenManager
         if (elevated)
         {
             Trace.WriteLine("FullScreenManager: Window is elevated, cannot maximize via UIPI.");
-            ShowBalloon?.Invoke("Elevated Window",
-                "Window was moved to a new desktop but could not be maximized (it's running as Administrator). Press Win+↑ to maximize it.");
+            NotificationOverlay.ShowNotification("⚠ Elevated Window",
+                "Press Win+↑ to maximize", hwnd);
         }
         else
         {
@@ -162,6 +157,7 @@ internal sealed class FullScreenManager
         // 7. Track it
         _tracker.Track(hwnd, originalDesktopId.Value, tempDesktopId.Value, tempDesktop, processName, originalPlacement);
 
+        NotificationOverlay.ShowNotification("→ Virtual Desktop", processName ?? "", hwnd);
         Trace.WriteLine($"FullScreenManager: Successfully maximized {hwnd} to desktop {tempDesktopId}");
     }
 
@@ -219,6 +215,7 @@ internal sealed class FullScreenManager
             NativeMethods.SetForegroundWindow(hwnd);
         }
 
+        NotificationOverlay.ShowNotification("← Restored", entry.ProcessName ?? "", hwnd);
         Trace.WriteLine($"FullScreenManager: Restored {hwnd} to original desktop.");
     }
 
@@ -278,6 +275,44 @@ internal sealed class FullScreenManager
         foreach (var hwnd in stale)
         {
             HandleWindowDestroyed(hwnd);
+        }
+    }
+
+    /// <summary>
+    /// Toggle pin/unpin of a window to all virtual desktops.
+    /// </summary>
+    public void PinToggle(IntPtr hwnd)
+    {
+        if (!NativeMethods.IsWindow(hwnd))
+        {
+            Trace.WriteLine($"FullScreenManager: hwnd {hwnd} is not valid, ignoring pin toggle.");
+            return;
+        }
+
+        string? processName = null;
+        try
+        {
+            NativeMethods.GetWindowThreadProcessId(hwnd, out int pid);
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            processName = !string.IsNullOrWhiteSpace(process.MainWindowTitle)
+                ? process.MainWindowTitle
+                : process.ProcessName;
+        }
+        catch { }
+
+        if (_vds.IsWindowPinned(hwnd))
+        {
+            if (_vds.UnpinWindow(hwnd))
+                NotificationOverlay.ShowNotification("📌 Unpinned", processName ?? "", hwnd);
+            else
+                NotificationOverlay.ShowNotification("⚠ Unpin Failed", processName ?? "", hwnd);
+        }
+        else
+        {
+            if (_vds.PinWindow(hwnd))
+                NotificationOverlay.ShowNotification("📌 Pinned to All Desktops", processName ?? "", hwnd);
+            else
+                NotificationOverlay.ShowNotification("⚠ Pin Failed", processName ?? "", hwnd);
         }
     }
 }

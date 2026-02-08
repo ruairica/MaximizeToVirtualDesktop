@@ -13,6 +13,7 @@ internal sealed class VirtualDesktopService : IDisposable
     private DesktopManagerAdapter? _managerInternal;
     private IVirtualDesktopManager? _manager;
     private IApplicationViewCollection? _viewCollection;
+    private IVirtualDesktopPinnedApps? _pinnedApps;
     private int _buildNumber;
     private bool _disposed;
 
@@ -39,6 +40,18 @@ internal sealed class VirtualDesktopService : IDisposable
             var viewCollGuid = typeof(IApplicationViewCollection).GUID;
             _viewCollection = (IApplicationViewCollection)shell.QueryService(
                 ref viewCollGuid, ref viewCollGuid);
+
+            // Pin support — query IVirtualDesktopPinnedApps
+            try
+            {
+                var pinnedGuid = typeof(IVirtualDesktopPinnedApps).GUID;
+                _pinnedApps = (IVirtualDesktopPinnedApps)shell.QueryService(
+                    ref Unsafe.AsRef(ComGuids.CLSID_VirtualDesktopPinnedApps), ref pinnedGuid);
+            }
+            catch
+            {
+                Trace.WriteLine("VirtualDesktopService: IVirtualDesktopPinnedApps not available.");
+            }
 
             Trace.WriteLine("VirtualDesktopService: COM initialized successfully.");
             return true;
@@ -300,11 +313,87 @@ internal sealed class VirtualDesktopService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Returns true if the window's view is pinned to all virtual desktops.
+    /// </summary>
+    public bool IsWindowPinned(IntPtr hwnd)
+    {
+        IApplicationView? view = null;
+        try
+        {
+            if (_pinnedApps == null || _viewCollection == null) return false;
+            _viewCollection.GetViewForHwnd(hwnd, out view);
+            return view != null && _pinnedApps.IsViewPinned(view);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"VirtualDesktopService: IsWindowPinned failed: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            if (view != null) Marshal.ReleaseComObject(view);
+        }
+    }
+
+    /// <summary>
+    /// Pin a window's view to all virtual desktops.
+    /// </summary>
+    public bool PinWindow(IntPtr hwnd)
+    {
+        IApplicationView? view = null;
+        try
+        {
+            if (_pinnedApps == null || _viewCollection == null) return false;
+            _viewCollection.GetViewForHwnd(hwnd, out view);
+            if (view == null) return false;
+            _pinnedApps.PinView(view);
+            Trace.WriteLine($"VirtualDesktopService: Pinned window {hwnd}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"VirtualDesktopService: PinWindow failed: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            if (view != null) Marshal.ReleaseComObject(view);
+        }
+    }
+
+    /// <summary>
+    /// Unpin a window's view from all virtual desktops.
+    /// </summary>
+    public bool UnpinWindow(IntPtr hwnd)
+    {
+        IApplicationView? view = null;
+        try
+        {
+            if (_pinnedApps == null || _viewCollection == null) return false;
+            _viewCollection.GetViewForHwnd(hwnd, out view);
+            if (view == null) return false;
+            _pinnedApps.UnpinView(view);
+            Trace.WriteLine($"VirtualDesktopService: Unpinned window {hwnd}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"VirtualDesktopService: UnpinWindow failed: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            if (view != null) Marshal.ReleaseComObject(view);
+        }
+    }
+
     private void ReleaseComObjects()
     {
         if (_managerInternal != null) { _managerInternal.Dispose(); _managerInternal = null; }
         if (_manager != null) { Marshal.ReleaseComObject(_manager); _manager = null; }
         if (_viewCollection != null) { Marshal.ReleaseComObject(_viewCollection); _viewCollection = null; }
+        if (_pinnedApps != null) { Marshal.ReleaseComObject(_pinnedApps); _pinnedApps = null; }
     }
 
     public void Dispose()

@@ -186,6 +186,7 @@ internal static partial class NativeMethods
     internal const uint MOD_NOREPEAT = 0x4000;
 
     internal const uint VK_X = 0x58;
+    internal const uint VK_P = 0x50;
 
     internal const uint WINEVENT_OUTOFCONTEXT = 0x0000;
     internal const uint EVENT_OBJECT_DESTROY = 0x8001;
