@@ -39,6 +39,13 @@ internal static partial class NativeMethods
     internal static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
+    internal static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam,
+        uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+    internal const uint SMTO_ABORTIFHUNG = 0x0002;
+
+    [DllImport("user32.dll")]
     internal static extern IntPtr WindowFromPoint(POINT point);
 
     [DllImport("user32.dll")]
@@ -96,6 +103,62 @@ internal static partial class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     internal static extern uint RegisterWindowMessage(string lpString);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetTokenInformation(IntPtr TokenHandle, int TokenInformationClass,
+        IntPtr TokenInformation, int TokenInformationLength, out int ReturnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool CloseHandle(IntPtr hObject);
+
+    internal const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    internal const uint TOKEN_QUERY = 0x0008;
+    internal const int TokenElevation = 20;
+
+    /// <summary>
+    /// Returns true if the process owning the given window is running elevated.
+    /// Returns false if we can't determine (fail-open so we still attempt the operation).
+    /// </summary>
+    internal static bool IsWindowElevated(IntPtr hwnd)
+    {
+        GetWindowThreadProcessId(hwnd, out int pid);
+        if (pid == 0) return false;
+
+        var hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (hProcess == IntPtr.Zero) return true; // can't open → likely elevated
+
+        try
+        {
+            if (!OpenProcessToken(hProcess, TOKEN_QUERY, out var hToken)) return false;
+            try
+            {
+                int size = Marshal.SizeOf(typeof(int));
+                var pElevation = Marshal.AllocHGlobal(size);
+                try
+                {
+                    if (GetTokenInformation(hToken, TokenElevation, pElevation, size, out _))
+                        return Marshal.ReadInt32(pElevation) != 0;
+                    return false;
+                }
+                finally { Marshal.FreeHGlobal(pElevation); }
+            }
+            finally { CloseHandle(hToken); }
+        }
+        finally { CloseHandle(hProcess); }
+    }
+
     // --- Constants ---
 
     internal const int SW_MAXIMIZE = 3;
@@ -106,6 +169,9 @@ internal static partial class NativeMethods
     internal const uint WM_HOTKEY = 0x0312;
     internal const uint WM_NCHITTEST = 0x0084;
     internal const int WM_LBUTTONDOWN = 0x0201;
+    internal const uint WM_SYSCOMMAND = 0x0112;
+
+    internal static readonly IntPtr SC_MAXIMIZE = new IntPtr(0xF030);
 
     internal const int HTMAXBUTTON = 9;
 

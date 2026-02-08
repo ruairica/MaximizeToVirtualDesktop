@@ -61,12 +61,17 @@ internal sealed class MaximizeButtonHook : IDisposable
                     var topLevel = GetTopLevelWindow(hwnd);
                     if (topLevel != IntPtr.Zero)
                     {
-                        Trace.WriteLine($"MaximizeButtonHook: Shift+Click on maximize button of {topLevel}");
-
                         // Post to UI thread — COM calls cannot be made inside an input-synchronous hook
-                        if (!_syncControl.IsDisposed && _syncControl.IsHandleCreated)
+                        try
                         {
-                            _syncControl.BeginInvoke(() => _manager.Toggle(topLevel));
+                            if (!_syncControl.IsDisposed && _syncControl.IsHandleCreated)
+                            {
+                                _syncControl.BeginInvoke(() => _manager.Toggle(topLevel));
+                            }
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            // App is shutting down
                         }
 
                         // Suppress the click
@@ -83,11 +88,13 @@ internal sealed class MaximizeButtonHook : IDisposable
     {
         try
         {
-            // Send WM_NCHITTEST to determine what part of the window the click is on.
-            // This is the same mechanism Windows 11 uses for Snap Layouts.
+            // Use SendMessageTimeout to avoid blocking if the target window is hung.
+            // A hung window would cause Windows to silently remove our LL hook.
             IntPtr lParam = (IntPtr)((pt.Y << 16) | (pt.X & 0xFFFF));
-            IntPtr hitResult = NativeMethods.SendMessage(hwnd, NativeMethods.WM_NCHITTEST, IntPtr.Zero, lParam);
-            return hitResult == (IntPtr)NativeMethods.HTMAXBUTTON;
+            IntPtr result = NativeMethods.SendMessageTimeout(
+                hwnd, NativeMethods.WM_NCHITTEST, IntPtr.Zero, lParam,
+                NativeMethods.SMTO_ABORTIFHUNG, 100, out IntPtr hitResult);
+            return result != IntPtr.Zero && hitResult == (IntPtr)NativeMethods.HTMAXBUTTON;
         }
         catch
         {

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using MaximizeToVirtualDesktop.Interop;
 
 namespace MaximizeToVirtualDesktop;
@@ -6,7 +7,9 @@ namespace MaximizeToVirtualDesktop;
 internal sealed record TrackingEntry(
     IntPtr Hwnd,
     Guid OriginalDesktopId,
+    Guid TempDesktopId,
     IVirtualDesktop TempDesktop,
+    string? ProcessName,
     NativeMethods.WINDOWPLACEMENT OriginalPlacement);
 
 /// <summary>
@@ -29,27 +32,54 @@ internal sealed class FullScreenTracker
         lock (_lock) return _entries.GetValueOrDefault(hwnd);
     }
 
-    public void Track(IntPtr hwnd, Guid originalDesktopId, IVirtualDesktop tempDesktop,
+    public void Track(IntPtr hwnd, Guid originalDesktopId, Guid tempDesktopId,
+        IVirtualDesktop tempDesktop, string? processName,
         NativeMethods.WINDOWPLACEMENT originalPlacement)
     {
         lock (_lock)
         {
-            _entries[hwnd] = new TrackingEntry(hwnd, originalDesktopId, tempDesktop, originalPlacement);
+            _entries[hwnd] = new TrackingEntry(hwnd, originalDesktopId, tempDesktopId,
+                tempDesktop, processName, originalPlacement);
             Trace.WriteLine($"FullScreenTracker: Now tracking {hwnd} (total: {_entries.Count})");
         }
+        PersistToDisk();
     }
 
     public TrackingEntry? Untrack(IntPtr hwnd)
     {
+        TrackingEntry? entry;
         lock (_lock)
         {
-            if (_entries.Remove(hwnd, out var entry))
+            if (_entries.Remove(hwnd, out entry))
             {
                 Trace.WriteLine($"FullScreenTracker: Untracked {hwnd} (total: {_entries.Count})");
-                return entry;
             }
-            return null;
+            else
+            {
+                return null;
+            }
         }
+        PersistToDisk();
+        return entry;
+    }
+
+    /// <summary>
+    /// Clear all entries, releasing COM references. Called when Explorer restarts
+    /// (Windows destroys all virtual desktops, making our tracked refs stale).
+    /// </summary>
+    public void ClearAll()
+    {
+        lock (_lock)
+        {
+            foreach (var entry in _entries.Values)
+            {
+                try { Marshal.ReleaseComObject(entry.TempDesktop); } catch { }
+            }
+            var count = _entries.Count;
+            _entries.Clear();
+            Trace.WriteLine($"FullScreenTracker: Cleared {count} stale entries (Explorer restart).");
+        }
+        TrackerPersistence.Delete();
     }
 
     /// <summary>Returns all tracked entries (snapshot).</summary>
@@ -72,5 +102,16 @@ internal sealed class FullScreenTracker
     public int Count
     {
         get { lock (_lock) return _entries.Count; }
+    }
+
+    private void PersistToDisk()
+    {
+        List<TrackerPersistence.PersistedEntry> snapshot;
+        lock (_lock)
+        {
+            snapshot = _entries.Values.Select(e =>
+                new TrackerPersistence.PersistedEntry(e.TempDesktopId, e.ProcessName, DateTime.UtcNow)).ToList();
+        }
+        TrackerPersistence.Save(snapshot);
     }
 }

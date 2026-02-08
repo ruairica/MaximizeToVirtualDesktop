@@ -1,10 +1,14 @@
-// Virtual Desktop COM interface declarations for Windows 11 24H2+
+// Virtual Desktop COM interface declarations for Windows 11
 // Vendored from MScholtes/VirtualDesktop v1.21 (MIT License)
 // https://github.com/MScholtes/VirtualDesktop
 //
 // These GUIDs are UNDOCUMENTED and change with Windows builds.
-// When they break, update from MScholtes' latest VirtualDesktop11-24H2.cs.
-// Last verified: Windows 11 24H2 (build 26100), August 2025.
+// When they break, update from MScholtes' latest .cs files.
+//
+// Supports: Windows 11 21H2+ (build 22000+)
+// - Pre-24H2 (builds 22000-26099): VirtualDesktop11.cs vtable
+// - 24H2+ (build 26100+): VirtualDesktop11-24H2.cs vtable (adds SwitchDesktopAndMoveForegroundView)
+// All GUIDs are identical between these versions — only the vtable layout differs.
 
 using System.Runtime.InteropServices;
 
@@ -15,6 +19,10 @@ internal static class ComGuids
     public static readonly Guid CLSID_ImmersiveShell = new("C2F03A33-21F5-47FA-B4BB-156362A2F239");
     public static readonly Guid CLSID_VirtualDesktopManagerInternal = new("C5E0CDCA-7B6E-41B2-9FC4-D93975CC467B");
     public static readonly Guid CLSID_VirtualDesktopManager = new("AA509086-5CA9-4C25-8F95-589D3C07B48A");
+
+    // Same GUID for IVirtualDesktopManagerInternal in both pre-24H2 and 24H2.
+    // The vtable layout differs — see the two interface declarations below.
+    public static readonly Guid IID_VirtualDesktopManagerInternal = new("53F5CA0B-158F-4124-900C-057158060B27");
 }
 
 [ComImport]
@@ -46,7 +54,7 @@ internal interface IVirtualDesktopManager
     void MoveWindowToDesktop(IntPtr topLevelWindow, ref Guid desktopId);
 }
 
-// Undocumented — GUID changes with Windows builds.
+// Undocumented — GUID identical between pre-24H2 and 24H2.
 [ComImport]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 [Guid("3F07F4BE-B107-441A-AF0F-39D82529072C")]
@@ -59,11 +67,12 @@ internal interface IVirtualDesktop
     bool IsRemote();
 }
 
-// Undocumented — GUID changes with Windows builds.
+// Windows 11 24H2+ (build 26100+) vtable.
+// Has SwitchDesktopAndMoveForegroundView at slot 10, shifting all subsequent methods.
 [ComImport]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 [Guid("53F5CA0B-158F-4124-900C-057158060B27")]
-internal interface IVirtualDesktopManagerInternal
+internal interface IVirtualDesktopManagerInternal24H2
 {
     int GetCount();
     void MoveViewToDesktop(IApplicationView view, IVirtualDesktop desktop);
@@ -74,6 +83,37 @@ internal interface IVirtualDesktopManagerInternal
     int GetAdjacentDesktop(IVirtualDesktop from, int direction, out IVirtualDesktop desktop);
     void SwitchDesktop(IVirtualDesktop desktop);
     void SwitchDesktopAndMoveForegroundView(IVirtualDesktop desktop);
+    IVirtualDesktop CreateDesktop();
+    void MoveDesktop(IVirtualDesktop desktop, int nIndex);
+    void RemoveDesktop(IVirtualDesktop desktop, IVirtualDesktop fallback);
+    IVirtualDesktop FindDesktop(ref Guid desktopId);
+    void GetDesktopSwitchIncludeExcludeViews(IVirtualDesktop desktop, out IObjectArray unknown1, out IObjectArray unknown2);
+    void SetDesktopName(IVirtualDesktop desktop, IntPtr nameHString);
+    void SetDesktopWallpaper(IVirtualDesktop desktop, IntPtr pathHString);
+    void UpdateWallpaperPathForAllDesktops(IntPtr pathHString);
+    void CopyDesktopState(IApplicationView pView0, IApplicationView pView1);
+    void CreateRemoteDesktop(IntPtr pathHString, out IVirtualDesktop desktop);
+    void SwitchRemoteDesktop(IVirtualDesktop desktop, IntPtr switchtype);
+    void SwitchDesktopWithAnimation(IVirtualDesktop desktop);
+    void GetLastActiveDesktop(out IVirtualDesktop desktop);
+    void WaitForAnimationToComplete();
+}
+
+// Windows 11 pre-24H2 (builds 22000-26099) vtable.
+// Does NOT have SwitchDesktopAndMoveForegroundView — CreateDesktop is at slot 10.
+[ComImport]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+[Guid("53F5CA0B-158F-4124-900C-057158060B27")]
+internal interface IVirtualDesktopManagerInternalPre24H2
+{
+    int GetCount();
+    void MoveViewToDesktop(IApplicationView view, IVirtualDesktop desktop);
+    bool CanViewMoveDesktops(IApplicationView view);
+    IVirtualDesktop GetCurrentDesktop();
+    void GetDesktops(out IObjectArray desktops);
+    [PreserveSig]
+    int GetAdjacentDesktop(IVirtualDesktop from, int direction, out IVirtualDesktop desktop);
+    void SwitchDesktop(IVirtualDesktop desktop);
     IVirtualDesktop CreateDesktop();
     void MoveDesktop(IVirtualDesktop desktop, int nIndex);
     void RemoveDesktop(IVirtualDesktop desktop, IVirtualDesktop fallback);

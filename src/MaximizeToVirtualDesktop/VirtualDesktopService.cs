@@ -10,23 +10,28 @@ namespace MaximizeToVirtualDesktop;
 /// </summary>
 internal sealed class VirtualDesktopService : IDisposable
 {
-    private IVirtualDesktopManagerInternal? _managerInternal;
+    private DesktopManagerAdapter? _managerInternal;
     private IVirtualDesktopManager? _manager;
     private IApplicationViewCollection? _viewCollection;
+    private int _buildNumber;
     private bool _disposed;
 
     public bool IsInitialized => _managerInternal != null && _manager != null;
 
-    public bool Initialize()
+    public bool Initialize(int windowsBuildNumber)
     {
+        _buildNumber = windowsBuildNumber;
+        IServiceProvider10? shell = null;
         try
         {
-            var shell = (IServiceProvider10)Activator.CreateInstance(
+            shell = (IServiceProvider10)Activator.CreateInstance(
                 Type.GetTypeFromCLSID(ComGuids.CLSID_ImmersiveShell)!)!;
 
-            var mgrInternalGuid = typeof(IVirtualDesktopManagerInternal).GUID;
-            _managerInternal = (IVirtualDesktopManagerInternal)shell.QueryService(
+            var mgrInternalGuid = ComGuids.IID_VirtualDesktopManagerInternal;
+            var mgrInternalRaw = shell.QueryService(
                 ref Unsafe.AsRef(ComGuids.CLSID_VirtualDesktopManagerInternal), ref mgrInternalGuid);
+
+            _managerInternal = DesktopManagerAdapter.Create(mgrInternalRaw, windowsBuildNumber);
 
             _manager = (IVirtualDesktopManager)Activator.CreateInstance(
                 Type.GetTypeFromCLSID(ComGuids.CLSID_VirtualDesktopManager)!)!;
@@ -41,10 +46,12 @@ internal sealed class VirtualDesktopService : IDisposable
         catch (Exception ex)
         {
             Trace.WriteLine($"VirtualDesktopService: COM initialization failed: {ex.Message}");
-            _managerInternal = null;
-            _manager = null;
-            _viewCollection = null;
+            ReleaseComObjects();
             return false;
+        }
+        finally
+        {
+            if (shell != null) Marshal.ReleaseComObject(shell);
         }
     }
 
@@ -54,19 +61,25 @@ internal sealed class VirtualDesktopService : IDisposable
     public bool Reinitialize()
     {
         ReleaseComObjects();
-        return Initialize();
+        return Initialize(_buildNumber);
     }
 
     public Guid? GetCurrentDesktopId()
     {
+        IVirtualDesktop? desktop = null;
         try
         {
-            return _managerInternal?.GetCurrentDesktop().GetId();
+            desktop = _managerInternal?.GetCurrentDesktop();
+            return desktop?.GetId();
         }
         catch (Exception ex)
         {
             Trace.WriteLine($"VirtualDesktopService: GetCurrentDesktopId failed: {ex.Message}");
             return null;
+        }
+        finally
+        {
+            if (desktop != null) Marshal.ReleaseComObject(desktop);
         }
     }
 
@@ -107,10 +120,10 @@ internal sealed class VirtualDesktopService : IDisposable
     /// </summary>
     public bool MoveWindowToDesktop(IntPtr hwnd, IVirtualDesktop desktop)
     {
+        IApplicationView? view = null;
         try
         {
             // For cross-process windows, we must use the view-based approach
-            IApplicationView? view = null;
             _viewCollection?.GetViewForHwnd(hwnd, out view);
 
             if (view != null)
@@ -131,19 +144,20 @@ internal sealed class VirtualDesktopService : IDisposable
         catch (Exception ex)
         {
             Trace.WriteLine($"VirtualDesktopService: MoveWindowToDesktop failed: {ex.Message}");
+            if (view != null) { Marshal.ReleaseComObject(view); view = null; }
 
             // Second attempt: try main window of the process
+            IApplicationView? fallbackView = null;
             try
             {
                 NativeMethods.GetWindowThreadProcessId(hwnd, out int processId);
-                var process = Process.GetProcessById(processId);
+                using var process = Process.GetProcessById(processId);
                 if (process.MainWindowHandle != IntPtr.Zero && process.MainWindowHandle != hwnd)
                 {
-                    IApplicationView? view = null;
-                    _viewCollection?.GetViewForHwnd(process.MainWindowHandle, out view);
-                    if (view != null)
+                    _viewCollection?.GetViewForHwnd(process.MainWindowHandle, out fallbackView);
+                    if (fallbackView != null)
                     {
-                        _managerInternal!.MoveViewToDesktop(view, desktop);
+                        _managerInternal!.MoveViewToDesktop(fallbackView, desktop);
                         Trace.WriteLine($"VirtualDesktopService: Moved main window instead for process {processId}");
                         return true;
                     }
@@ -153,8 +167,16 @@ internal sealed class VirtualDesktopService : IDisposable
             {
                 Trace.WriteLine($"VirtualDesktopService: Fallback move also failed: {ex2.Message}");
             }
+            finally
+            {
+                if (fallbackView != null) Marshal.ReleaseComObject(fallbackView);
+            }
 
             return false;
+        }
+        finally
+        {
+            if (view != null) Marshal.ReleaseComObject(view);
         }
     }
 
@@ -199,10 +221,12 @@ internal sealed class VirtualDesktopService : IDisposable
     /// </summary>
     public bool RemoveDesktop(IVirtualDesktop desktop)
     {
+        IVirtualDesktop? current = null;
+        IVirtualDesktop? adjacent = null;
         try
         {
             // Find a fallback desktop (the current one, or adjacent)
-            var current = _managerInternal!.GetCurrentDesktop();
+            current = _managerInternal!.GetCurrentDesktop();
             IVirtualDesktop fallback;
 
             if (current.GetId() == desktop.GetId())
@@ -218,6 +242,7 @@ internal sealed class VirtualDesktopService : IDisposable
                         return false;
                     }
                 }
+                adjacent = fallback;
             }
             else
             {
@@ -232,6 +257,11 @@ internal sealed class VirtualDesktopService : IDisposable
         {
             Trace.WriteLine($"VirtualDesktopService: RemoveDesktop failed: {ex.Message}");
             return false;
+        }
+        finally
+        {
+            if (adjacent != null) Marshal.ReleaseComObject(adjacent);
+            if (current != null) Marshal.ReleaseComObject(current);
         }
     }
 
@@ -272,7 +302,7 @@ internal sealed class VirtualDesktopService : IDisposable
 
     private void ReleaseComObjects()
     {
-        if (_managerInternal != null) { Marshal.ReleaseComObject(_managerInternal); _managerInternal = null; }
+        if (_managerInternal != null) { _managerInternal.Dispose(); _managerInternal = null; }
         if (_manager != null) { Marshal.ReleaseComObject(_manager); _manager = null; }
         if (_viewCollection != null) { Marshal.ReleaseComObject(_viewCollection); _viewCollection = null; }
     }

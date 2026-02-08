@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using MaximizeToVirtualDesktop.Interop;
 using Updatum;
 
@@ -42,6 +43,13 @@ internal sealed class TrayApplication : Form
         _vds = new VirtualDesktopService();
         _tracker = new FullScreenTracker();
         _manager = new FullScreenManager(_vds, _tracker);
+        _manager.ShowBalloon = (title, text) =>
+        {
+            _trayIcon.BalloonTipTitle = title;
+            _trayIcon.BalloonTipText = text;
+            _trayIcon.BalloonTipIcon = ToolTipIcon.Warning;
+            _trayIcon.ShowBalloonTip(5000);
+        };
         _monitor = new WindowMonitor(_manager, _tracker, this);
         _mouseHook = new MaximizeButtonHook(_manager, this);
 
@@ -80,27 +88,8 @@ internal sealed class TrayApplication : Form
             return;
         }
 
-        if (buildNumber < 26100)
-        {
-            // Windows 11 but older than 24H2
-            var result = MessageBox.Show(
-                "MaximizeToVirtualDesktop is built for Windows 11 24H2 (build 26100+).\n\n" +
-                $"Your system is running build {buildNumber}.\n\n" +
-                "The app may not work correctly on older Windows 11 versions because\n" +
-                "Microsoft changes the internal Virtual Desktop APIs between releases.\n\n" +
-                "Would you like to try anyway?",
-                "MaximizeToVirtualDesktop — Older Windows 11 Version",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-
-            if (result != DialogResult.Yes)
-            {
-                Application.Exit();
-                return;
-            }
-        }
-
-        // Initialize COM
-        _comInitialized = _vds.Initialize();
+        // Initialize COM (adapter auto-selects based on build number)
+        _comInitialized = _vds.Initialize(buildNumber);
         if (!_comInitialized)
         {
             Trace.WriteLine("TrayApplication: COM initialization failed — entering degraded mode.");
@@ -141,6 +130,9 @@ internal sealed class TrayApplication : Form
 
         // Register for Explorer restart notification
         _shellRestartMessage = NativeMethods.RegisterWindowMessage("TaskbarCreated");
+
+        // Recover orphaned desktops from a previous crash
+        RecoverOrphanedDesktops();
 
         // Start monitoring
         StartMonitoring();
@@ -185,6 +177,11 @@ internal sealed class TrayApplication : Form
         if (_shellRestartMessage != 0 && m.Msg == (int)_shellRestartMessage)
         {
             Trace.WriteLine("TrayApplication: Explorer restarted, reinitializing COM...");
+
+            // Windows destroys all virtual desktops on Explorer restart —
+            // our tracked COM refs are now stale and must be released.
+            _tracker.ClearAll();
+
             if (_vds.Reinitialize() && !_comInitialized)
             {
                 // Recovered from degraded mode!
@@ -375,6 +372,28 @@ internal sealed class TrayApplication : Form
         {
             return 0;
         }
+    }
+
+    private void RecoverOrphanedDesktops()
+    {
+        var persisted = TrackerPersistence.Load();
+        if (persisted.Count == 0) return;
+
+        Trace.WriteLine($"TrayApplication: Found {persisted.Count} orphaned desktop(s) from previous session.");
+
+        foreach (var entry in persisted)
+        {
+            var desktop = _vds.FindDesktop(entry.TempDesktopId);
+            if (desktop != null)
+            {
+                Trace.WriteLine($"TrayApplication: Removing orphaned desktop {entry.TempDesktopId} ({entry.ProcessName ?? "unknown"})");
+                _vds.RemoveDesktop(desktop);
+                Marshal.ReleaseComObject(desktop);
+            }
+        }
+
+        TrackerPersistence.Delete();
+        Trace.WriteLine("TrayApplication: Orphaned desktop recovery complete.");
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

@@ -21,15 +21,18 @@ The app runs in the system tray. Right-click the tray icon for options:
 
 ## How It Works
 
-1. **Maximize** — creates a new virtual desktop, moves the window there, switches to it, and maximizes the window. The desktop is named after the process.
+1. **Maximize** — creates a new virtual desktop, moves the window there, switches to it, and maximizes the window. The desktop is named `[MVD] ProcessName` so you can identify it in Task View.
 2. **Auto-restore on un-maximize** — if you restore/un-maximize a tracked window, it's automatically sent back to its original desktop and the temp desktop is cleaned up.
 3. **Auto-restore on close** — closing a tracked window triggers the same cleanup.
 4. **Toggle** — pressing the hotkey on an already-tracked window restores it.
+5. **Crash recovery** — if the app is killed or crashes, orphaned desktops are automatically cleaned up on next launch.
 
 ## Requirements
 
-- **Windows 11 24H2** or later
+- **Windows 11** (any version — 21H2 through 24H2+)
 - Self-contained — no .NET installation required
+
+The app auto-detects your Windows build and selects the correct COM vtable layout. If a future Windows update breaks things, the app enters degraded mode and checks for updates automatically.
 
 ### Shift+Click Compatibility
 
@@ -68,12 +71,14 @@ src/MaximizeToVirtualDesktop/
 ├── VirtualDesktopService.cs    COM wrapper, 4 operations, Explorer restart recovery
 ├── WindowMonitor.cs            SetWinEventHook for close/un-maximize detection
 ├── MaximizeButtonHook.cs       WH_MOUSE_LL for Shift+Click on maximize button
+├── TrackerPersistence.cs       JSON crash recovery in %LOCALAPPDATA%
 └── Interop/
     ├── NativeMethods.cs        P/Invoke declarations
-    └── VirtualDesktopCom.cs    Vendored COM interfaces (from MScholtes/VirtualDesktop)
+    ├── VirtualDesktopCom.cs    Vendored COM interfaces (from MScholtes/VirtualDesktop)
+    └── DesktopManagerAdapter.cs Multi-version COM vtable adapter
 ```
 
-**Zero NuGet dependencies.** COM interop declarations are vendored from [MScholtes/VirtualDesktop](https://github.com/MScholtes/VirtualDesktop) (MIT license, actively maintained).
+**Zero NuGet dependencies.** COM interop declarations are vendored from [MScholtes/VirtualDesktop](https://github.com/MScholtes/VirtualDesktop) (MIT license, actively maintained). The app ships two vtable layouts (pre-24H2 and 24H2+) and auto-selects the correct one with a smoke test fallback.
 
 ## Design Principles
 
@@ -84,7 +89,7 @@ src/MaximizeToVirtualDesktop/
 ## Known Limitations
 
 - **Elevated windows** — cannot move windows running as Administrator from a non-elevated instance.
-- **App crash** — if the app crashes, temporary desktops may remain. They're named after the process for easy identification.
+- **App crash** — if the app crashes, temporary desktops are cleaned up automatically on next launch. They're prefixed with `[MVD]` in Task View for easy manual identification.
 
 ## The Virtual Desktop GUID Problem
 
@@ -97,8 +102,9 @@ This is the single biggest fragility in this app. When it breaks, the app shows 
 ### How to update the GUIDs
 
 1. Check [MScholtes/VirtualDesktop](https://github.com/MScholtes/VirtualDesktop) — Markus Scholtes maintains per-build interface files (e.g., `VirtualDesktop11-24H2.cs`) and typically updates within days of a new Windows build. Huge thanks to him for doing this thankless work for the entire community.
-2. Copy the updated GUIDs into `src/MaximizeToVirtualDesktop/Interop/VirtualDesktopCom.cs`
-3. The fragile GUIDs are on these interfaces:
+2. If it's a **vtable change** (new/removed methods, same GUIDs), add a new adapter class in `DesktopManagerAdapter.cs` and a new COM interface in `VirtualDesktopCom.cs`.
+3. If it's a **GUID change**, update the GUIDs on the affected interfaces.
+4. The fragile GUIDs are on these interfaces:
 
 | Interface | What it does | Stable? |
 |-----------|-------------|---------|

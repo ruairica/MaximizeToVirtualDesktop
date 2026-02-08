@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using MaximizeToVirtualDesktop.Interop;
 
 namespace MaximizeToVirtualDesktop;
@@ -11,6 +12,12 @@ internal sealed class FullScreenManager
 {
     private readonly VirtualDesktopService _vds;
     private readonly FullScreenTracker _tracker;
+    private readonly HashSet<IntPtr> _inFlight = new();
+
+    /// <summary>
+    /// Callback to show a notification balloon (set by TrayApplication).
+    /// </summary>
+    public Action<string, string>? ShowBalloon { get; set; }
 
     public FullScreenManager(VirtualDesktopService vds, FullScreenTracker tracker)
     {
@@ -29,13 +36,26 @@ internal sealed class FullScreenManager
             return;
         }
 
-        if (_tracker.IsTracked(hwnd))
+        if (!_inFlight.Add(hwnd))
         {
-            Restore(hwnd);
+            Trace.WriteLine($"FullScreenManager: hwnd {hwnd} already in-flight, ignoring.");
+            return;
         }
-        else
+
+        try
         {
-            MaximizeToDesktop(hwnd);
+            if (_tracker.IsTracked(hwnd))
+            {
+                Restore(hwnd);
+            }
+            else
+            {
+                MaximizeToDesktop(hwnd);
+            }
+        }
+        finally
+        {
+            _inFlight.Remove(hwnd);
         }
     }
 
@@ -81,14 +101,15 @@ internal sealed class FullScreenManager
         }
 
         // 3. Name the desktop after the window title (or process name as fallback)
+        string? processName = null;
         try
         {
             NativeMethods.GetWindowThreadProcessId(hwnd, out int processId);
-            var process = Process.GetProcessById(processId);
-            var name = !string.IsNullOrWhiteSpace(process.MainWindowTitle)
+            using var process = Process.GetProcessById(processId);
+            processName = !string.IsNullOrWhiteSpace(process.MainWindowTitle)
                 ? process.MainWindowTitle
                 : process.ProcessName;
-            _vds.SetDesktopName(tempDesktop, name);
+            _vds.SetDesktopName(tempDesktop, $"[MVD] {processName}");
         }
         catch
         {
@@ -100,6 +121,7 @@ internal sealed class FullScreenManager
         {
             Trace.WriteLine("FullScreenManager: Failed to move window, rolling back desktop creation.");
             _vds.RemoveDesktop(tempDesktop);
+            Marshal.ReleaseComObject(tempDesktop);
             return;
         }
 
@@ -109,17 +131,36 @@ internal sealed class FullScreenManager
             // Rollback: move window back, remove desktop
             Trace.WriteLine("FullScreenManager: Failed to switch desktop, rolling back.");
             var origDesktop = _vds.FindDesktop(originalDesktopId.Value);
-            if (origDesktop != null) _vds.MoveWindowToDesktop(hwnd, origDesktop);
+            try
+            {
+                if (origDesktop != null) _vds.MoveWindowToDesktop(hwnd, origDesktop);
+            }
+            finally
+            {
+                if (origDesktop != null) Marshal.ReleaseComObject(origDesktop);
+            }
             _vds.RemoveDesktop(tempDesktop);
+            Marshal.ReleaseComObject(tempDesktop);
             return;
         }
 
-        // 6. Maximize the window
-        NativeMethods.ShowWindow(hwnd, NativeMethods.SW_MAXIMIZE);
+        // 6. Maximize the window — delay lets desktop switch animation finish first
+        bool elevated = NativeMethods.IsWindowElevated(hwnd);
+        if (elevated)
+        {
+            Trace.WriteLine("FullScreenManager: Window is elevated, cannot maximize via UIPI.");
+            ShowBalloon?.Invoke("Elevated Window",
+                "Window was moved to a new desktop but could not be maximized (it's running as Administrator). Press Win+↑ to maximize it.");
+        }
+        else
+        {
+            Thread.Sleep(250);
+            NativeMethods.ShowWindow(hwnd, NativeMethods.SW_MAXIMIZE);
+        }
         NativeMethods.SetForegroundWindow(hwnd);
 
         // 7. Track it
-        _tracker.Track(hwnd, originalDesktopId.Value, tempDesktop, originalPlacement);
+        _tracker.Track(hwnd, originalDesktopId.Value, tempDesktopId.Value, tempDesktop, processName, originalPlacement);
 
         Trace.WriteLine($"FullScreenManager: Successfully maximized {hwnd} to desktop {tempDesktopId}");
     }
@@ -149,32 +190,30 @@ internal sealed class FullScreenManager
             NativeMethods.SetWindowPlacement(hwnd, ref placement);
         }
 
-        // 2. Move window back to original desktop
-        if (windowStillExists)
+        // 2. Move window back to original desktop and switch back
+        var origDesktop = _vds.FindDesktop(entry.OriginalDesktopId);
+        try
         {
-            var origDesktop = _vds.FindDesktop(entry.OriginalDesktopId);
             if (origDesktop != null)
             {
-                _vds.MoveWindowToDesktop(hwnd, origDesktop);
+                if (windowStillExists) _vds.MoveWindowToDesktop(hwnd, origDesktop);
+                _vds.SwitchToDesktop(origDesktop);
             }
             else
             {
-                // Original desktop was removed by user — leave window on current desktop
                 Trace.WriteLine("FullScreenManager: Original desktop no longer exists, leaving window on current.");
             }
         }
-
-        // 3. Switch back to original desktop
-        var origDesktopForSwitch = _vds.FindDesktop(entry.OriginalDesktopId);
-        if (origDesktopForSwitch != null)
+        finally
         {
-            _vds.SwitchToDesktop(origDesktopForSwitch);
+            if (origDesktop != null) Marshal.ReleaseComObject(origDesktop);
         }
 
-        // 4. Remove temp desktop (tolerates failure — user may have already removed it)
+        // 3. Remove temp desktop and release its COM reference
         _vds.RemoveDesktop(entry.TempDesktop);
+        Marshal.ReleaseComObject(entry.TempDesktop);
 
-        // 5. Set focus on the restored window
+        // 4. Set focus on the restored window
         if (windowStillExists)
         {
             NativeMethods.SetForegroundWindow(hwnd);
@@ -195,13 +234,18 @@ internal sealed class FullScreenManager
 
         // Switch back to original desktop first
         var origDesktop = _vds.FindDesktop(entry.OriginalDesktopId);
-        if (origDesktop != null)
+        try
         {
-            _vds.SwitchToDesktop(origDesktop);
+            if (origDesktop != null) _vds.SwitchToDesktop(origDesktop);
+        }
+        finally
+        {
+            if (origDesktop != null) Marshal.ReleaseComObject(origDesktop);
         }
 
-        // Then remove the temp desktop
+        // Then remove the temp desktop and release its COM reference
         _vds.RemoveDesktop(entry.TempDesktop);
+        Marshal.ReleaseComObject(entry.TempDesktop);
     }
 
     /// <summary>
