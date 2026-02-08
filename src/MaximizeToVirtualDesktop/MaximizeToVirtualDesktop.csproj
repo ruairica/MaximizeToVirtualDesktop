@@ -16,4 +16,8 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Updatum" Version="1.2.1" />
+  </ItemGroup>
+
 </Project>

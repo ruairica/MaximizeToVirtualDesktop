@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using MaximizeToVirtualDesktop.Interop;
+using Updatum;
 
 namespace MaximizeToVirtualDesktop;
 
@@ -19,6 +20,12 @@ internal sealed class TrayApplication : Form
     private readonly WindowMonitor _monitor;
     private readonly MaximizeButtonHook _mouseHook;
     private readonly System.Windows.Forms.Timer _cleanupTimer;
+
+    internal static readonly UpdatumManager Updater = new("shanselman", "MaximizeToVirtualDesktop")
+    {
+        FetchOnlyLatestRelease = true,
+        InstallUpdateSingleFileExecutableName = "MaximizeToVirtualDesktop",
+    };
 
     public TrayApplication()
     {
@@ -95,6 +102,9 @@ internal sealed class TrayApplication : Form
         _cleanupTimer.Start();
 
         Trace.WriteLine("TrayApplication: Started.");
+
+        // Check for updates asynchronously
+        _ = CheckForUpdatesAsync();
     }
 
     protected override void WndProc(ref Message m)
@@ -152,6 +162,14 @@ internal sealed class TrayApplication : Form
 
         menu.Items.Add(new ToolStripSeparator());
 
+        var updateItem = new ToolStripMenuItem("Check for Updates...", null, async (_, _) =>
+        {
+            await CheckForUpdatesAsync(userInitiated: true);
+        });
+        menu.Items.Add(updateItem);
+
+        menu.Items.Add(new ToolStripSeparator());
+
         var exitItem = new ToolStripMenuItem("Exit", null, (_, _) =>
         {
             Application.Exit();
@@ -159,6 +177,52 @@ internal sealed class TrayApplication : Form
         menu.Items.Add(exitItem);
 
         return menu;
+    }
+
+    private async Task CheckForUpdatesAsync(bool userInitiated = false)
+    {
+        try
+        {
+            if (!userInitiated) await Task.Delay(3000);
+
+            var updateFound = await Updater.CheckForUpdatesAsync();
+
+            if (!updateFound)
+            {
+                if (userInitiated)
+                    MessageBox.Show("You're running the latest version.", "No Updates",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var release = Updater.LatestRelease!;
+            var changelog = Updater.GetChangelog(true) ?? "No release notes available.";
+            var result = MessageBox.Show(
+                $"Version {release.TagName} is available.\n\n{changelog}\n\nDownload and install?",
+                "Update Available",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+
+            if (result == DialogResult.Yes)
+            {
+                var asset = await Updater.DownloadUpdateAsync();
+                if (asset != null)
+                {
+                    await Updater.InstallUpdateAsync(asset);
+                }
+                else
+                {
+                    MessageBox.Show("Failed to download the update.", "Update Error",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"TrayApplication: Update check failed: {ex.Message}");
+            if (userInitiated)
+                MessageBox.Show($"Update check failed: {ex.Message}", "Update Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
