@@ -12,6 +12,7 @@ internal sealed class TrayApplication : Form
 {
     private const int HOTKEY_ID = 0x1;
     private uint _shellRestartMessage;
+    private bool _comInitialized;
 
     private readonly NotifyIcon _trayIcon;
     private readonly VirtualDesktopService _vds;
@@ -20,6 +21,7 @@ internal sealed class TrayApplication : Form
     private readonly WindowMonitor _monitor;
     private readonly MaximizeButtonHook _mouseHook;
     private readonly System.Windows.Forms.Timer _cleanupTimer;
+    private System.Windows.Forms.Timer? _retryTimer;
 
     internal static readonly UpdatumManager Updater = new("shanselman", "MaximizeToVirtualDesktop")
     {
@@ -62,44 +64,50 @@ internal sealed class TrayApplication : Form
         base.OnHandleCreated(e);
 
         // Initialize COM
-        if (!_vds.Initialize())
+        _comInitialized = _vds.Initialize();
+        if (!_comInitialized)
         {
-            MessageBox.Show(
-                "Failed to initialize Virtual Desktop COM interface.\n\n" +
-                "This may mean your Windows version is not supported.\n" +
-                "MaximizeToVirtualDesktop requires Windows 11 24H2 or later.",
-                "MaximizeToVirtualDesktop",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-            Application.Exit();
-            return;
-        }
+            Trace.WriteLine("TrayApplication: COM initialization failed — entering degraded mode.");
+            _trayIcon.Text = "Maximize to Virtual Desktop\n⚠️ COM failed — checking for updates...";
+            _trayIcon.BalloonTipTitle = "Maximize to Virtual Desktop";
+            _trayIcon.BalloonTipText =
+                "Virtual Desktop COM interface failed to initialize.\n" +
+                "This usually means Windows updated and broke the internal APIs.\n" +
+                "Checking for an updated version now...";
+            _trayIcon.BalloonTipIcon = ToolTipIcon.Warning;
+            _trayIcon.ShowBalloonTip(5000);
 
-        // Register global hotkey: Ctrl+Alt+Shift+X
-        if (!NativeMethods.RegisterHotKey(Handle, HOTKEY_ID,
-            NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_SHIFT | NativeMethods.MOD_NOREPEAT,
-            NativeMethods.VK_X))
-        {
-            MessageBox.Show(
-                "Failed to register hotkey Ctrl+Alt+Shift+X.\n\n" +
-                "Another application may already be using this key combination.",
-                "MaximizeToVirtualDesktop",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-            // Continue anyway — the app is still useful if we add Shift+Click later
-        }
-        else
-        {
-            Trace.WriteLine("TrayApplication: Registered hotkey Ctrl+Alt+Shift+X");
+            // Immediately check for updates, then retry every 5 minutes
+            _ = CheckForUpdatesAsync(userInitiated: false, comFailure: true);
+            _retryTimer = new System.Windows.Forms.Timer { Interval = 5 * 60 * 1000 };
+            _retryTimer.Tick += async (_, _) =>
+            {
+                // Try reinitializing COM in case an in-place Windows update fixed it
+                if (_vds.Reinitialize())
+                {
+                    Trace.WriteLine("TrayApplication: COM reinitialized successfully!");
+                    _comInitialized = true;
+                    _retryTimer!.Stop();
+                    _retryTimer.Dispose();
+                    _retryTimer = null;
+                    _trayIcon.Text = "Maximize to Virtual Desktop\nCtrl+Alt+Shift+X or Shift+Click maximize button";
+                    StartMonitoring();
+                    return;
+                }
+                await CheckForUpdatesAsync(userInitiated: false, comFailure: true);
+            };
+            _retryTimer.Start();
+
+            // Register for Explorer restart — COM might work after Explorer restarts
+            _shellRestartMessage = NativeMethods.RegisterWindowMessage("TaskbarCreated");
+            return;
         }
 
         // Register for Explorer restart notification
         _shellRestartMessage = NativeMethods.RegisterWindowMessage("TaskbarCreated");
 
         // Start monitoring
-        _monitor.Start();
-        _mouseHook.Install();
-        _cleanupTimer.Start();
+        StartMonitoring();
 
         Trace.WriteLine("TrayApplication: Started.");
 
@@ -108,6 +116,25 @@ internal sealed class TrayApplication : Form
 
         // Check for updates asynchronously
         _ = CheckForUpdatesAsync();
+    }
+
+    private void StartMonitoring()
+    {
+        _monitor.Start();
+        _mouseHook.Install();
+        _cleanupTimer.Start();
+
+        // Register hotkey if not already registered
+        if (!NativeMethods.RegisterHotKey(Handle, HOTKEY_ID,
+            NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_SHIFT | NativeMethods.MOD_NOREPEAT,
+            NativeMethods.VK_X))
+        {
+            Trace.WriteLine("TrayApplication: Failed to register hotkey (may already be registered).");
+        }
+        else
+        {
+            Trace.WriteLine("TrayApplication: Registered hotkey Ctrl+Alt+Shift+X");
+        }
     }
 
     protected override void WndProc(ref Message m)
@@ -122,7 +149,17 @@ internal sealed class TrayApplication : Form
         if (_shellRestartMessage != 0 && m.Msg == (int)_shellRestartMessage)
         {
             Trace.WriteLine("TrayApplication: Explorer restarted, reinitializing COM...");
-            _vds.Reinitialize();
+            if (_vds.Reinitialize() && !_comInitialized)
+            {
+                // Recovered from degraded mode!
+                Trace.WriteLine("TrayApplication: COM recovered after Explorer restart!");
+                _comInitialized = true;
+                _retryTimer?.Stop();
+                _retryTimer?.Dispose();
+                _retryTimer = null;
+                _trayIcon.Text = "Maximize to Virtual Desktop\nCtrl+Alt+Shift+X or Shift+Click maximize button";
+                StartMonitoring();
+            }
             return;
         }
 
@@ -131,6 +168,12 @@ internal sealed class TrayApplication : Form
 
     private void OnHotkeyPressed()
     {
+        if (!_comInitialized)
+        {
+            Trace.WriteLine("TrayApplication: Hotkey pressed but COM not initialized.");
+            return;
+        }
+
         var hwnd = NativeMethods.GetForegroundWindow();
         if (hwnd == IntPtr.Zero || hwnd == Handle)
         {
@@ -190,11 +233,11 @@ internal sealed class TrayApplication : Form
         return menu;
     }
 
-    private async Task CheckForUpdatesAsync(bool userInitiated = false)
+    private async Task CheckForUpdatesAsync(bool userInitiated = false, bool comFailure = false)
     {
         try
         {
-            if (!userInitiated) await Task.Delay(5000);
+            if (!userInitiated && !comFailure) await Task.Delay(5000);
 
             var updateFound = await Updater.CheckForUpdatesAsync();
 
@@ -203,14 +246,20 @@ internal sealed class TrayApplication : Form
                 if (userInitiated)
                     MessageBox.Show("You're running the latest version.", "No Updates",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
+                if (comFailure)
+                    _trayIcon.Text = "Maximize to Virtual Desktop\n⚠️ COM failed — no update available yet";
                 return;
             }
 
             var release = Updater.LatestRelease!;
             var changelog = Updater.GetChangelog(true) ?? "No release notes available.";
-            var result = MessageBox.Show(
-                $"Version {release.TagName} is available.\n\n{changelog}\n\nDownload and install?",
-                "Update Available",
+
+            var message = comFailure
+                ? $"A fix may be available! Version {release.TagName} is ready.\n\n{changelog}\n\nDownload and install?"
+                : $"Version {release.TagName} is available.\n\n{changelog}\n\nDownload and install?";
+
+            var result = MessageBox.Show(message,
+                comFailure ? "Update Available — May Fix COM Issue" : "Update Available",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Information);
 
             if (result == DialogResult.Yes)
@@ -281,6 +330,9 @@ internal sealed class TrayApplication : Form
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         Trace.WriteLine("TrayApplication: Shutting down...");
+
+        _retryTimer?.Stop();
+        _retryTimer?.Dispose();
 
         _cleanupTimer.Stop();
         _cleanupTimer.Dispose();
