@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/MaximizeToVirtualDesktop.Interop/MaximizeToVirtualDesktop.Interop.csproj" />
     <Project Path="src/MaximizeToVirtualDesktop/MaximizeToVirtualDesktop.csproj" />
+    <Project Path="src/DevDesk/DevDesk.csproj" />
   </Folder>
 </Solution>

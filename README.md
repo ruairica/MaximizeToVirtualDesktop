@@ -1,3 +1,5 @@
+
+
 # MaximizeToVirtualDesktop
 
 Bring macOS's green-button "maximize to full-screen virtual desktop" behavior to Windows 11.

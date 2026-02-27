@@ -1,14 +1,13 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using MaximizeToVirtualDesktop.Interop;
 
-namespace MaximizeToVirtualDesktop;
+namespace MaximizeToVirtualDesktop.Interop;
 
 /// <summary>
 /// Wraps the COM virtual desktop APIs. All methods are defensive — they catch COM
 /// exceptions and return success/failure rather than throwing.
 /// </summary>
-internal sealed class VirtualDesktopService : IDisposable
+public sealed class VirtualDesktopService : IDisposable
 {
     private DesktopManagerAdapter? _managerInternal;
     private IVirtualDesktopManager? _manager;
@@ -407,9 +406,9 @@ internal sealed class VirtualDesktopService : IDisposable
 }
 
 // Helper to pass readonly Guid fields by ref to COM
-internal static class Unsafe
+public static class Unsafe
 {
-    internal static ref Guid AsRef(in Guid guid)
+    public static ref Guid AsRef(in Guid guid)
     {
         // We need to pass a readonly static Guid by ref to COM QueryService.
         // This is safe because COM only reads the value.

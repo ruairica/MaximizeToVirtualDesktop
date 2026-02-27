@@ -7,7 +7,7 @@ namespace MaximizeToVirtualDesktop.Interop;
 /// Abstraction over version-specific IVirtualDesktopManagerInternal COM interfaces.
 /// Exposes only the methods we use, with correct vtable mapping for each Windows build.
 /// </summary>
-internal abstract class DesktopManagerAdapter : IDisposable
+public abstract class DesktopManagerAdapter : IDisposable
 {
     public abstract int GetCount();
     public abstract IVirtualDesktop GetCurrentDesktop();
