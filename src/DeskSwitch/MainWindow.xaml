@@ -1,0 +1,159 @@
+<Window x:Class="DeskSwitch.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DeskSwitch"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ResizeMode="NoResize"
+        Width="420"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterScreen"
+        Deactivated="Window_Deactivated">
+
+    <Window.Resources>
+        <SolidColorBrush x:Key="BgBrush" Color="#E6141414"/>
+        <SolidColorBrush x:Key="BorderBrush" Color="#40FFFFFF"/>
+        <SolidColorBrush x:Key="TextBrush" Color="#EAEAEA"/>
+        <SolidColorBrush x:Key="DimTextBrush" Color="#808080"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#0078D4"/>
+        <SolidColorBrush x:Key="HoverBrush" Color="#20FFFFFF"/>
+        <SolidColorBrush x:Key="SelectedBrush" Color="#30FFFFFF"/>
+        <SolidColorBrush x:Key="CurrentBadgeBrush" Color="#305090FF"/>
+    </Window.Resources>
+
+    <Border Background="{StaticResource BgBrush}"
+            BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Padding="0"
+            >
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" ShadowDepth="0" Opacity="0.5"/>
+        </Border.Effect>
+
+        <StackPanel>
+            <!-- Search box -->
+            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="12,10">
+                <Grid>
+                    <TextBlock x:Name="PlaceholderText"
+                               Text="Search desktops..."
+                               Foreground="{StaticResource DimTextBrush}"
+                               FontSize="15" FontFamily="Segoe UI"
+                               VerticalAlignment="Center"
+                               Margin="2,0,0,0"
+                               IsHitTestVisible="False"/>
+                    <TextBox x:Name="SearchBox"
+                             Background="Transparent"
+                             Foreground="{StaticResource TextBrush}"
+                             CaretBrush="{StaticResource TextBrush}"
+                             BorderThickness="0"
+                             FontSize="15" FontFamily="Segoe UI"
+                             VerticalAlignment="Center"
+                             TextChanged="SearchBox_TextChanged"
+                             PreviewKeyDown="SearchBox_PreviewKeyDown"/>
+                </Grid>
+            </Border>
+
+            <!-- Desktop list -->
+            <ListBox x:Name="DesktopList"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     MaxHeight="320"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     SelectionChanged="DesktopList_SelectionChanged"
+                     MouseDoubleClick="DesktopList_MouseDoubleClick">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="12,8"/>
+                        <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                        <Setter Property="FontSize" Value="14"/>
+                        <Setter Property="FontFamily" Value="Segoe UI"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="Bd"
+                                            Background="Transparent"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverBrush}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource SelectedBrush}"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource TextBrush}"/>
+                            <Border Grid.Column="1"
+                                    Background="{StaticResource CurrentBadgeBrush}"
+                                    CornerRadius="3"
+                                    Padding="6,1"
+                                    Visibility="{Binding CurrentVisibility}">
+                                <TextBlock Text="current" FontSize="11" Foreground="{StaticResource DimTextBrush}"/>
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- New Desktop button -->
+            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
+                <Button x:Name="NewDesktopButton"
+                        Content="+ New Desktop"
+                        Background="Transparent"
+                        Foreground="{StaticResource DimTextBrush}"
+                        BorderThickness="0"
+                        FontSize="13" FontFamily="Segoe UI"
+                        Padding="12,8"
+                        HorizontalContentAlignment="Left"
+                        Cursor="Hand"
+                        Click="NewDesktopButton_Click"
+                        Focusable="False">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverBrush}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Border>
+
+            <!-- Hint bar -->
+            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="12,5">
+                <TextBlock FontSize="11" FontFamily="Segoe UI" Foreground="{StaticResource DimTextBrush}">
+                    <Run Text="Enter"/>
+                    <Run Text="switch" Foreground="#666"/>
+                    <Run Text="   Del"/>
+                    <Run Text="remove" Foreground="#666"/>
+                    <Run Text="   +name"/>
+                    <Run Text="new desktop" Foreground="#666"/>
+                    <Run Text="   Esc"/>
+                    <Run Text="close" Foreground="#666"/>
+                </TextBlock>
+            </Border>
+        </StackPanel>
+    </Border>
+</Window>

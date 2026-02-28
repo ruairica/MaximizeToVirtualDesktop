@@ -299,6 +299,60 @@ public sealed class VirtualDesktopService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Returns all virtual desktops as a list of (id, name) tuples.
+    /// Unnamed desktops get a default name like "Desktop 1".
+    /// </summary>
+    public List<(Guid id, string name)> GetAllDesktops()
+    {
+        var result = new List<(Guid, string)>();
+        IObjectArray? array = null;
+        try
+        {
+            _managerInternal!.GetDesktops(out array);
+            array.GetCount(out int count);
+
+            var iid = typeof(IVirtualDesktop).GUID;
+            for (int i = 0; i < count; i++)
+            {
+                IVirtualDesktop? desktop = null;
+                try
+                {
+                    array.GetAt(i, ref iid, out var obj);
+                    desktop = (IVirtualDesktop)obj;
+                    var id = desktop.GetId();
+                    var name = ReadHString(desktop.GetName()) ?? $"Desktop {i + 1}";
+                    result.Add((id, name));
+                }
+                catch (Exception ex)
+                {
+                    Trace.WriteLine($"VirtualDesktopService: GetAllDesktops failed at index {i}: {ex.Message}");
+                }
+                finally
+                {
+                    if (desktop != null) Marshal.ReleaseComObject(desktop);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"VirtualDesktopService: GetAllDesktops failed: {ex.Message}");
+        }
+        finally
+        {
+            if (array != null) Marshal.ReleaseComObject(array);
+        }
+        return result;
+    }
+
+    private static string? ReadHString(IntPtr hstring)
+    {
+        if (hstring == IntPtr.Zero) return null;
+        var buf = NativeMethods.WindowsGetStringRawBuffer(hstring, out int length);
+        if (buf == IntPtr.Zero || length == 0) return null;
+        return Marshal.PtrToStringUni(buf, length);
+    }
+
     public IVirtualDesktop? FindDesktop(Guid desktopId)
     {
         try
