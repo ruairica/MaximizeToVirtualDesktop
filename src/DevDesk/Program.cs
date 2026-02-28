@@ -37,6 +37,7 @@ static class Program
         // 3. Snapshot existing windows before launch
         var existingTerminals = GetWindowsByClass(TerminalWindowClass);
         var existingCodeWindows = GetCodeWindows();
+        var existingChromeWindows = GetWindowsByClassAndProcess(ElectronWindowClass, "chrome");
 
         // 4. Create and switch to new desktop
         var (desktop, desktopId) = vds.CreateDesktop();
@@ -89,6 +90,21 @@ static class Program
             Console.Error.WriteLine($"Warning: Failed to launch VS Code: {ex.Message}");
         }
 
+        // 6b. Launch Chrome
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "chrome.exe",
+                Arguments = "--new-window",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Warning: Failed to launch Chrome: {ex.Message}");
+        }
+
         // 7. Wait for windows and snap them
         Console.Write("Waiting for windows...");
 
@@ -96,27 +112,29 @@ static class Program
             TerminalWindowClass, null, existingTerminals, TimeSpan.FromSeconds(15));
         var codeHwnd = WaitForNewWindow(
             ElectronWindowClass, "Code", existingCodeWindows, TimeSpan.FromSeconds(15));
+        var chromeHwnd = WaitForNewWindow(
+            ElectronWindowClass, "chrome", existingChromeWindows, TimeSpan.FromSeconds(15));
 
         Console.WriteLine();
 
-        if (termHwnd != IntPtr.Zero && codeHwnd != IntPtr.Zero)
-        {
-            WindowSnapper.SnapLeft(termHwnd);
-            WindowSnapper.SnapRight(codeHwnd);
-            Console.WriteLine("Done — Terminal (left) + VS Code (right).");
-        }
+        // Maximize Chrome behind first so it's at the back
+        if (chromeHwnd != IntPtr.Zero)
+            WindowSnapper.MaximizeBehind(chromeHwnd);
         else
-        {
-            if (termHwnd == IntPtr.Zero)
-                Console.Error.WriteLine("Warning: Terminal window not detected within timeout.");
-            else
-                WindowSnapper.SnapLeft(termHwnd);
+            Console.Error.WriteLine("Warning: Chrome window not detected within timeout.");
 
-            if (codeHwnd == IntPtr.Zero)
-                Console.Error.WriteLine("Warning: VS Code window not detected within timeout.");
-            else
-                WindowSnapper.SnapRight(codeHwnd);
-        }
+        if (termHwnd != IntPtr.Zero)
+            WindowSnapper.SnapLeft(termHwnd);
+        else
+            Console.Error.WriteLine("Warning: Terminal window not detected within timeout.");
+
+        if (codeHwnd != IntPtr.Zero)
+            WindowSnapper.SnapRight(codeHwnd);
+        else
+            Console.Error.WriteLine("Warning: VS Code window not detected within timeout.");
+
+        if (termHwnd != IntPtr.Zero && codeHwnd != IntPtr.Zero)
+            Console.WriteLine("Done — Terminal (left) + VS Code (right) + Chrome (behind).");
 
         return 0;
     }
@@ -130,6 +148,23 @@ static class Program
         NativeMethods.EnumWindows((hwnd, _) =>
         {
             if (NativeMethods.IsWindowVisible(hwnd) && GetWindowClassName(hwnd) == className)
+                result.Add(hwnd);
+            return true;
+        }, IntPtr.Zero);
+        return result;
+    }
+
+    /// <summary>
+    /// Collects all visible windows matching a class name and process name.
+    /// </summary>
+    private static HashSet<IntPtr> GetWindowsByClassAndProcess(string className, string processNameContains)
+    {
+        var result = new HashSet<IntPtr>();
+        NativeMethods.EnumWindows((hwnd, _) =>
+        {
+            if (NativeMethods.IsWindowVisible(hwnd)
+                && GetWindowClassName(hwnd) == className
+                && IsProcessMatch(hwnd, processNameContains))
                 result.Add(hwnd);
             return true;
         }, IntPtr.Zero);

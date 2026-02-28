@@ -36,6 +36,17 @@ static class WindowSnapper
             NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
     }
 
+    public static void MaximizeBehind(IntPtr hwnd)
+    {
+        NativeMethods.ShowWindow(hwnd, NativeMethods.SW_MAXIMIZE);
+        Thread.Sleep(50);
+
+        // Push behind other windows
+        NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_BOTTOM,
+            0, 0, 0, 0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+    }
+
     private static NativeMethods.RECT GetWorkArea(IntPtr hwnd)
     {
         var monitor = NativeMethods.MonitorFromWindow(hwnd, NativeMethods.MONITOR_DEFAULTTOPRIMARY);
