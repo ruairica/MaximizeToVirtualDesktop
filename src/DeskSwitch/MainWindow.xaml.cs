@@ -12,6 +12,8 @@ public partial class MainWindow : Window
     private List<DesktopItem> _allDesktops = [];
     private Guid _currentDesktopId;
     private bool _closingFromAction;
+    private bool _renaming;
+    private Guid _renamingId;
 
     public MainWindow(VirtualDesktopService vds)
     {
@@ -21,6 +23,8 @@ public partial class MainWindow : Window
 
     public void ShowOverlay()
     {
+        _renaming = false;
+        PlaceholderText.Text = "Search desktops...";
         RefreshDesktopList();
         SearchBox.Text = "";
         Show();
@@ -30,6 +34,7 @@ public partial class MainWindow : Window
 
     public void HideOverlay()
     {
+        _renaming = false;
         Hide();
     }
 
@@ -50,6 +55,8 @@ public partial class MainWindow : Window
 
     private void ApplyFilter()
     {
+        if (_renaming) return;
+
         var query = SearchBox.Text.Trim();
         List<DesktopItem> filtered;
 
@@ -153,6 +160,53 @@ public partial class MainWindow : Window
         }
     }
 
+    private void StartRename()
+    {
+        if (DesktopList.SelectedItem is not DesktopItem item) return;
+
+        _renaming = true;
+        _renamingId = item.Id;
+        PlaceholderText.Visibility = Visibility.Collapsed;
+        SearchBox.Text = item.DisplayName;
+        SearchBox.SelectAll();
+    }
+
+    private void CommitRename()
+    {
+        var newName = SearchBox.Text.Trim();
+        if (string.IsNullOrEmpty(newName))
+        {
+            CancelRename();
+            return;
+        }
+
+        var desktop = _vds.FindDesktop(_renamingId);
+        if (desktop != null)
+        {
+            try
+            {
+                _vds.SetDesktopName(desktop, newName);
+            }
+            finally
+            {
+                Marshal.ReleaseComObject(desktop);
+            }
+        }
+
+        _renaming = false;
+        PlaceholderText.Text = "Search desktops...";
+        SearchBox.Text = "";
+        RefreshDesktopList();
+    }
+
+    private void CancelRename()
+    {
+        _renaming = false;
+        PlaceholderText.Text = "Search desktops...";
+        SearchBox.Text = "";
+        ApplyFilter();
+    }
+
     // --- Event handlers ---
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -166,16 +220,28 @@ public partial class MainWindow : Window
         {
             case Key.Enter:
                 e.Handled = true;
-                SwitchToSelected();
+                if (_renaming)
+                    CommitRename();
+                else
+                    SwitchToSelected();
                 break;
 
             case Key.Escape:
                 e.Handled = true;
-                HideOverlay();
+                if (_renaming)
+                    CancelRename();
+                else
+                    HideOverlay();
+                break;
+
+            case Key.F2:
+                e.Handled = true;
+                if (!_renaming)
+                    StartRename();
                 break;
 
             case Key.Delete:
-                if (string.IsNullOrEmpty(SearchBox.Text))
+                if (!_renaming && string.IsNullOrEmpty(SearchBox.Text))
                 {
                     e.Handled = true;
                     RemoveSelected();
@@ -183,23 +249,20 @@ public partial class MainWindow : Window
                 break;
 
             case Key.Down:
-                e.Handled = true;
-                MoveSelection(1);
-                break;
-
             case Key.Up:
+                if (_renaming) break;
                 e.Handled = true;
-                MoveSelection(-1);
+                MoveSelection(e.Key == Key.Down ? 1 : -1);
                 break;
 
             case Key.Tab:
+                if (_renaming) break;
                 e.Handled = true;
                 if (Keyboard.Modifiers == ModifierKeys.Shift)
                     MoveSelection(-1);
                 else
                     MoveSelection(1);
                 break;
-
         }
     }
 

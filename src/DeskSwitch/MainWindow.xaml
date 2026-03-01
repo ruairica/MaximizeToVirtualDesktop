@@ -116,7 +116,7 @@
             <!-- New Desktop button -->
             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
                 <Button x:Name="NewDesktopButton"
-                        Content="+ New Desktop"
+                        Content="Type +name to create new desktop"
                         Background="Transparent"
                         Foreground="{StaticResource DimTextBrush}"
                         BorderThickness="0"
@@ -148,8 +148,8 @@
                     <Run Text="switch" Foreground="#666"/>
                     <Run Text="   Del"/>
                     <Run Text="remove" Foreground="#666"/>
-                    <Run Text="   +name"/>
-                    <Run Text="new desktop" Foreground="#666"/>
+                    <Run Text="   F2"/>
+                    <Run Text="rename" Foreground="#666"/>
                     <Run Text="   Esc"/>
                     <Run Text="close" Foreground="#666"/>
                 </TextBlock>
