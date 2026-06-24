@@ -3,7 +3,8 @@
     "allow": [
       "Bash(xargs grep:*)",
       "Read(//c/Source/personal/MaximizeToVirtualDesktop/src/DeskSwitch/**)",
-      "Bash(dotnet publish:*)"
+      "Bash(dotnet publish:*)",
+      "PowerShell(dotnet publish *)"
     ]
   }
 }

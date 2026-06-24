@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using WindowsVirtualDesktop.Interop;
 
 namespace DeskSwitch;
@@ -28,8 +29,39 @@ public partial class MainWindow : Window
         RefreshDesktopList();
         SearchBox.Text = "";
         Show();
+        PositionAtCursor();
         Activate();
         SearchBox.Focus();
+    }
+
+    /// <summary>
+    /// Centres the overlay on the monitor that currently contains the mouse
+    /// cursor. Worked out in physical pixels via SetWindowPos so it is correct
+    /// regardless of per-monitor DPI scaling. Must run after Show() so the
+    /// window has a handle and SizeToContent has measured its height.
+    /// </summary>
+    private void PositionAtCursor()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
+
+        if (!NativeMethods.GetCursorPos(out var pt)) return;
+
+        var hMonitor = NativeMethods.MonitorFromPoint(pt, NativeMethods.MONITOR_DEFAULTTONEAREST);
+        var mi = new NativeMethods.MONITORINFO { cbSize = Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+        if (!NativeMethods.GetMonitorInfo(hMonitor, ref mi)) return;
+
+        if (!NativeMethods.GetWindowRect(hwnd, out var wr)) return;
+        int winWidth = wr.Right - wr.Left;
+        int winHeight = wr.Bottom - wr.Top;
+
+        var work = mi.rcWork;
+        int x = work.Left + ((work.Right - work.Left) - winWidth) / 2;
+        int y = work.Top + ((work.Bottom - work.Top) - winHeight) / 2;
+
+        NativeMethods.SetWindowPos(
+            hwnd, IntPtr.Zero, x, y, 0, 0,
+            NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
     }
 
     public void HideOverlay()
